@@ -1,0 +1,17 @@
+{
+  "appId": "com.bookscan.app",
+  "appName": "BookScan",
+  "webDir": ".",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#0f172a"
+    }
+  }
+}

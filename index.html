@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="description" content="Android対応 蔵書管理アプリ - OpenBD API & Googleスプレッドシート連携">
+  <title>BookScan - 蔵書管理アプリ</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- html5-qrcode (Barcode Scanner) Library -->
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- ヘッダー -->
+    <header class="app-header">
+      <div class="logo">
+        <i class="fa-solid fa-book-bookmark"></i>
+        <h1>BookScan <span>蔵書管理</span></h1>
+      </div>
+      <button id="btn-settings" class="icon-btn" title="GAS連携設定">
+        <i class="fa-solid fa-gear"></i>
+        <span id="gas-status-dot" class="status-dot disconnected" title="GAS未設定"></span>
+      </button>
+    </header>
+
+    <!-- メインコンテンツ -->
+    <main class="app-main">
+      
+      <!-- タブ1: スキャナー画面 -->
+      <section id="tab-scanner" class="tab-content active">
+        
+        <!-- カメラ＆手動検索カード -->
+        <div class="card scanner-card">
+          <div class="scanner-header">
+            <h2><i class="fa-solid fa-barcode"></i> ISBNバーコードスキャン</h2>
+            <div class="scanner-controls">
+              <button id="btn-toggle-camera" class="btn btn-primary btn-sm">
+                <i class="fa-solid fa-camera"></i> <span id="camera-btn-text">カメラ起動</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- カメラプレビューコンテナ -->
+          <div id="reader-wrapper" class="reader-wrapper hidden">
+            <div id="reader"></div>
+            <div class="scan-overlay">
+              <div class="scan-target-box">
+                <div class="scan-line"></div>
+              </div>
+              <p class="scan-hint">書籍裏面の「978」から始まるISBNバーコードにかざしてください</p>
+            </div>
+          </div>
+
+          <!-- 手動ISBN入力フォーム -->
+          <div class="manual-input-box">
+            <label for="input-isbn"><i class="fa-solid fa-keyboard"></i> ISBN手入力 / 検索</label>
+            <div class="input-group">
+              <input type="text" id="input-isbn" placeholder="例: 9784774196077" pattern="[0-9-]*" inputmode="numeric">
+              <button id="btn-search-isbn" class="btn btn-secondary">
+                <i class="fa-solid fa-magnifying-glass"></i> 検索
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 取得結果プレビューカード -->
+        <div id="result-card" class="card result-card hidden">
+          <div class="result-header">
+            <h3><i class="fa-solid fa-circle-check"></i> 書籍情報を取得しました</h3>
+            <span class="badge badge-success">OpenBD</span>
+          </div>
+          
+          <div class="book-detail">
+            <div class="book-cover-wrapper">
+              <img id="book-cover" src="" alt="書影" class="book-cover hidden">
+              <div id="book-cover-placeholder" class="cover-placeholder">
+                <i class="fa-solid fa-book"></i>
+              </div>
+            </div>
+            
+            <div class="book-info">
+              <h4 id="book-title" class="book-title">--</h4>
+              <p id="book-author" class="book-meta"><i class="fa-solid fa-user"></i> <span>--</span></p>
+              <p id="book-publisher" class="book-meta"><i class="fa-solid fa-building"></i> <span>--</span></p>
+              <p id="book-pubdate" class="book-meta"><i class="fa-solid fa-calendar"></i> <span>--</span></p>
+              <p id="book-isbn" class="book-meta isbn-code"><i class="fa-solid fa-barcode"></i> ISBN: <span>--</span></p>
+            </div>
+          </div>
+
+          <!-- スプレッドシート追記内容の確認 -->
+          <div class="sheet-preview">
+            <h4>スプレッドシート書き込みプレビュー (A~G列)</h4>
+            <div class="sheet-row-grid">
+              <div class="sheet-col"><span class="col-label">A: ISBN</span><span id="preview-col-a" class="col-val">-</span></div>
+              <div class="sheet-col"><span class="col-label">B: タイトル</span><span id="preview-col-b" class="col-val">-</span></div>
+              <div class="sheet-col"><span class="col-label">C: 著者名</span><span id="preview-col-c" class="col-val">-</span></div>
+              <div class="sheet-col"><span class="col-label">D: 出版社名</span><span id="preview-col-d" class="col-val">-</span></div>
+              <div class="sheet-col"><span class="col-label">E: 発行日</span><span id="preview-col-e" class="col-val">-</span></div>
+              <div class="sheet-col highlight"><span class="col-label">F: 登録日</span><span id="preview-col-f" class="col-val">-</span></div>
+              <div class="sheet-col muted"><span class="col-label">G: 処分日</span><span id="preview-col-g" class="col-val">(空欄)</span></div>
+            </div>
+          </div>
+
+          <div class="result-actions">
+            <button id="btn-save-sheet" class="btn btn-accent btn-block">
+              <i class="fa-file-excel fa-regular"></i> スプレッドシートに保存
+            </button>
+            <button id="btn-reset-scan" class="btn btn-outline">
+              <i class="fa-solid fa-rotate-left"></i> 次の本をスキャン
+            </button>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- タブ2: 蔵書一覧画面 -->
+      <section id="tab-list" class="tab-content">
+        <div class="card list-card">
+          <div class="list-header">
+            <h2><i class="fa-solid fa-list-check"></i> 登録済み蔵書一覧</h2>
+            <button id="btn-refresh-list" class="btn btn-secondary btn-sm">
+              <i class="fa-solid fa-arrows-rotate"></i> 更新
+            </button>
+          </div>
+          <div id="list-status" class="list-status-text">GASからデータを読み込み中...</div>
+          
+          <div class="table-responsive">
+            <table class="book-table">
+              <thead>
+                <tr>
+                  <th>ISBN</th>
+                  <th>タイトル</th>
+                  <th>著者名</th>
+                  <th>出版社</th>
+                  <th>発行日</th>
+                  <th>登録日(F)</th>
+                  <th>処分日(G)</th>
+                </tr>
+              </thead>
+              <tbody id="book-table-body">
+                <!-- 動的に生成されます -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- ナビゲーションバー (ボトム固定) -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-tab="tab-scanner">
+        <i class="fa-solid fa-barcode"></i>
+        <span>スキャン</span>
+      </button>
+      <button class="nav-item" data-tab="tab-list">
+        <i class="fa-solid fa-book"></i>
+        <span>蔵書一覧</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- GAS設定モーダル -->
+  <div id="modal-settings" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-sliders"></i> GAS Web App 設定</h3>
+        <button id="btn-close-modal" class="icon-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="help-text">
+          Google Apps Script で「ウェブアプリとしてデプロイ」した際の URL を貼り付けてください。
+        </p>
+        <div class="form-group">
+          <label for="input-gas-url">GAS ウェブアプリ URL:</label>
+          <input type="url" id="input-gas-url" placeholder="https://script.google.com/macros/s/.../exec">
+        </div>
+        <div class="setup-guide-link">
+          <a href="#" id="link-show-guide"><i class="fa-solid fa-circle-info"></i> GASデプロイ手順を見る</a>
+        </div>
+        <div id="gas-guide-content" class="guide-box hidden">
+          <ol>
+            <li>Googleスプレッドシートを作成・開きます。</li>
+            <li>「拡張機能」&gt;「Apps Script」を選択。</li>
+            <li>`Code.gs` の内容をコピー＆ペーストして保存。</li>
+            <li>画面右上の「デプロイ」&gt;「新しいデプロイ」をクリック。</li>
+            <li>種類: <b>ウェブアプリ</b> を選択。</li>
+            <li>アクセスできるユーザー: <b>全員 (Anyone)</b> に設定。</li>
+            <li>デプロイを実行し、発行された「ウェブアプリ URL」を上に貼り付けます。</li>
+          </ol>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-save-settings" class="btn btn-primary btn-block">
+          <i class="fa-solid fa-floppy-disk"></i> 設定を保存
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- トースト通知 -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

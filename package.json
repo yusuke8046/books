@@ -1,0 +1,17 @@
+{
+  "name": "bookscan-app",
+  "version": "1.0.0",
+  "description": "BookScan Android Native & Web App",
+  "main": "index.html",
+  "scripts": {
+    "start": "python -m http.server 8080",
+    "cap:sync": "cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/core": "^6.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.0.0"
+  }
+}
