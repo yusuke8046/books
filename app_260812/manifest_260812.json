@@ -1,0 +1,21 @@
+{
+  "name": "BookScan 蔵書管理 v260812",
+  "short_name": "BookScan260812",
+  "start_url": "./index_260812.html",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "description": "ISBNバーコード ＆ 文字読み取り(OCR) 対応 蔵書管理アプリ (v260812)",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3389/3389014.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3389/3389014.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
