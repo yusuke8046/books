@@ -1,22 +1,39 @@
 /**
- * BookScan 蔵書管理 Web/PWA JavaScript
+ * BookScan 蔵書管理 App JS (v260812 最新版)
+ * バーコードスキャン & Tesseract.js OCR文字認識 & リアルタイム蔵書検索対応
  */
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- 状態変数 ---
+  let activeMode = 'barcode'; // 'barcode' または 'ocr'
   let html5QrCode = null;
   let isCameraScanning = false;
+  let ocrVideoStream = null;
   let currentBookData = null;
+  let allLoadedBooks = [];
+
   let gasUrl = localStorage.getItem('bookscan_gas_url') || '';
 
   // --- DOM要素 ---
+  const modeBarcodeBtn = document.getElementById('mode-barcode');
+  const modeOcrBtn = document.getElementById('mode-ocr');
+  
   const btnToggleCamera = document.getElementById('btn-toggle-camera');
   const cameraBtnText = document.getElementById('camera-btn-text');
-  const readerWrapper = document.getElementById('reader-wrapper');
+  
+  const barcodeWrapper = document.getElementById('barcode-wrapper');
+  const ocrWrapper = document.getElementById('ocr-wrapper');
+  const ocrVideo = document.getElementById('ocr-video');
+  const ocrCanvas = document.getElementById('ocr-canvas');
+  const btnCaptureOcr = document.getElementById('btn-capture-ocr');
+  const ocrLoading = document.getElementById('ocr-loading');
+  const ocrStatusText = document.getElementById('ocr-status-text');
+
   const inputIsbn = document.getElementById('input-isbn');
   const btnSearchIsbn = document.getElementById('btn-search-isbn');
-  
+
   const resultCard = document.getElementById('result-card');
+  const scanSourceBadge = document.getElementById('scan-source-badge');
   const bookCover = document.getElementById('book-cover');
   const bookCoverPlaceholder = document.getElementById('book-cover-placeholder');
   const bookTitle = document.getElementById('book-title');
@@ -36,15 +53,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnSaveSheet = document.getElementById('btn-save-sheet');
   const btnResetScan = document.getElementById('btn-reset-scan');
 
-  // 一覧タブ・設定モーダル要素
   const btnSettings = document.getElementById('btn-settings');
   const gasStatusDot = document.getElementById('gas-status-dot');
   const modalSettings = document.getElementById('modal-settings');
   const btnCloseModal = document.getElementById('btn-close-modal');
   const inputGasUrl = document.getElementById('input-gas-url');
   const btnSaveSettings = document.getElementById('btn-save-settings');
-  const linkShowGuide = document.getElementById('link-show-guide');
-  const gasGuideContent = document.getElementById('gas-guide-content');
 
   const navItems = document.querySelectorAll('.nav-item');
   const tabContents = document.querySelectorAll('.tab-content');
@@ -52,38 +66,46 @@ document.addEventListener('DOMContentLoaded', () => {
   const bookTableBody = document.getElementById('book-table-body');
   const listStatus = document.getElementById('list-status');
 
-  // --- 初期設定 ---
+  const inputSearchBook = document.getElementById('input-search-book');
+  const btnClearSearch = document.getElementById('btn-clear-search');
+
+  // --- 初期化 ---
   updateGasStatusUI();
 
-  // Service Worker 登録 (PWA用)
+  // Service Worker 登録
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(err => {
-      console.log('ServiceWorker registration failed: ', err);
+    navigator.serviceWorker.register('sw.js?v=260812').catch(err => {
+      console.log('SW registration error:', err);
     });
   }
 
-  // --- イベントリスナー ---
-
-  // タブ切り替え
-  navItems.forEach(item => {
-    item.addEventListener('click', () => {
-      const targetTab = item.getAttribute('data-tab');
-      
-      navItems.forEach(n => n.classList.remove('active'));
-      tabContents.forEach(t => t.classList.remove('active'));
-
-      item.classList.add('active');
-      document.getElementById(targetTab).classList.add('active');
-
-      if (targetTab === 'tab-list') {
-        // カメラ停止
-        if (isCameraScanning) stopCamera();
-        fetchSheetBooks();
-      }
-    });
+  // --- モード切替 (バーコード vs OCR) ---
+  modeBarcodeBtn.addEventListener('click', () => {
+    if (activeMode === 'barcode') return;
+    switchMode('barcode');
   });
 
-  // カメラトグルボタン
+  modeOcrBtn.addEventListener('click', () => {
+    if (activeMode === 'ocr') return;
+    switchMode('ocr');
+  });
+
+  function switchMode(mode) {
+    if (isCameraScanning) {
+      stopCamera();
+    }
+    activeMode = mode;
+    
+    if (mode === 'barcode') {
+      modeBarcodeBtn.classList.add('active');
+      modeOcrBtn.classList.remove('active');
+    } else {
+      modeOcrBtn.classList.add('active');
+      modeBarcodeBtn.classList.remove('active');
+    }
+  }
+
+  // --- カメラ起動/停止 トグル ---
   btnToggleCamera.addEventListener('click', () => {
     if (isCameraScanning) {
       stopCamera();
@@ -92,124 +114,199 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // 手動ISBN検索
+  function startCamera() {
+    if (activeMode === 'barcode') {
+      startBarcodeCamera();
+    } else {
+      startOcrCamera();
+    }
+  }
+
+  function stopCamera() {
+    if (activeMode === 'barcode') {
+      stopBarcodeCamera();
+    } else {
+      stopOcrCamera();
+    }
+  }
+
+  // --- 1. バーコードカメラロジック ---
+  function startBarcodeCamera() {
+    barcodeWrapper.classList.remove('hidden');
+    ocrWrapper.classList.add('hidden');
+    html5QrCode = new Html5Qrcode("reader");
+
+    const config = { fps: 15, qrbox: { width: 250, height: 110 } };
+
+    html5QrCode.start(
+      { facingMode: "environment" },
+      config,
+      onBarcodeScanned,
+      () => {}
+    ).then(() => {
+      isCameraScanning = true;
+      cameraBtnText.textContent = 'カメラ停止';
+      btnToggleCamera.classList.replace('btn-primary', 'btn-secondary');
+    }).catch(err => {
+      console.error("Barcode camera start error:", err);
+      showToast("カメラの起動に失敗しました。アクセス権限を確認してください", "error");
+      barcodeWrapper.classList.add('hidden');
+    });
+  }
+
+  function stopBarcodeCamera() {
+    if (html5QrCode && isCameraScanning) {
+      html5QrCode.stop().then(() => {
+        html5QrCode.clear();
+        isCameraScanning = false;
+        barcodeWrapper.classList.add('hidden');
+        cameraBtnText.textContent = 'カメラ起動';
+        btnToggleCamera.classList.replace('btn-secondary', 'btn-primary');
+      }).catch(err => console.error(err));
+    }
+  }
+
+  function onBarcodeScanned(decodedText) {
+    const cleaned = decodedText.replace(/[^0-9]/g, '');
+    if (cleaned.length === 13 && (cleaned.startsWith('978') || cleaned.startsWith('979'))) {
+      playBeepSound();
+      if (navigator.vibrate) navigator.vibrate(150);
+
+      stopBarcodeCamera();
+      inputIsbn.value = cleaned;
+      fetchBookData(cleaned, 'Barcode');
+    }
+  }
+
+  // --- 2. OCR (文字読み取り) カメラロジック ---
+  async function startOcrCamera() {
+    ocrWrapper.classList.remove('hidden');
+    barcodeWrapper.classList.add('hidden');
+
+    try {
+      const constraints = {
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      };
+      ocrVideoStream = await navigator.mediaDevices.getUserMedia(constraints);
+      ocrVideo.srcObject = ocrVideoStream;
+
+      isCameraScanning = true;
+      cameraBtnText.textContent = 'カメラ停止';
+      btnToggleCamera.classList.replace('btn-primary', 'btn-secondary');
+    } catch (err) {
+      console.error("OCR camera error:", err);
+      showToast("カメラの起動に失敗しました", "error");
+      ocrWrapper.classList.add('hidden');
+    }
+  }
+
+  function stopOcrCamera() {
+    if (ocrVideoStream) {
+      ocrVideoStream.getTracks().forEach(track => track.stop());
+      ocrVideoStream = null;
+    }
+    isCameraScanning = false;
+    ocrWrapper.classList.add('hidden');
+    cameraBtnText.textContent = 'カメラ起動';
+    btnToggleCamera.classList.replace('btn-secondary', 'btn-primary');
+  }
+
+  // OCRキャプチャ読み取り実行
+  btnCaptureOcr.addEventListener('click', async () => {
+    if (!ocrVideoStream || !ocrVideo.videoWidth) {
+      showToast('カメラ映像が準備できていません', 'error');
+      return;
+    }
+
+    ocrLoading.classList.remove('hidden');
+    ocrStatusText.textContent = 'カメラ枠内のISBN文字を解析中...';
+
+    const canvas = ocrCanvas;
+    canvas.width = ocrVideo.videoWidth;
+    canvas.height = ocrVideo.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(ocrVideo, 0, 0, canvas.width, canvas.height);
+
+    try {
+      if (typeof Tesseract === 'undefined') {
+        showToast('Tesseract.js OCRライブラリの読み込みに失敗しました', 'error');
+        ocrLoading.classList.add('hidden');
+        return;
+      }
+
+      const result = await Tesseract.recognize(canvas, 'eng+jpn', {
+        logger: m => {
+          if (m.status === 'recognizing text') {
+            ocrStatusText.textContent = `ISBN文字解析中... ${Math.round(m.progress * 100)}%`;
+          }
+        }
+      });
+
+      ocrLoading.classList.add('hidden');
+      const text = result.data.text;
+
+      const extractedIsbn = extractIsbnFromText(text);
+
+      if (extractedIsbn) {
+        playBeepSound();
+        if (navigator.vibrate) navigator.vibrate(150);
+
+        stopOcrCamera();
+        inputIsbn.value = extractedIsbn;
+        showToast(`ISBN文字を取得しました: ${extractedIsbn}`, 'success');
+        fetchBookData(extractedIsbn, 'OCR');
+      } else {
+        showToast('ISBN文字が検出されませんでした。印刷文字に近づけて再試行してください', 'error');
+      }
+
+    } catch (err) {
+      console.error("OCR process error:", err);
+      ocrLoading.classList.add('hidden');
+      showToast('OCR処理中にエラーが発生しました', 'error');
+    }
+  });
+
+  function extractIsbnFromText(text) {
+    if (!text) return null;
+    const rawClean = text.replace(/[^0-9X]/gi, '');
+    
+    const match13 = text.match(/(?:ISBN(?:-13)?:?\s*)?(97[89][-\s]?[0-9][-\s]?[0-9]{2,5}[-\s]?[0-9]{2,5}[-\s]?[0-9X])/i);
+    if (match13 && match13[1]) {
+      const isbnCandidate = match13[1].replace(/[^0-9]/g, '');
+      if (isbnCandidate.length === 13) return isbnCandidate;
+    }
+
+    const matchRaw13 = rawClean.match(/(97[89]\d{10})/);
+    if (matchRaw13 && matchRaw13[1]) {
+      return matchRaw13[1];
+    }
+
+    const match10 = text.match(/(?:ISBN(?:-10)?:?\s*)?([0-9][-\s]?[0-9]{2,5}[-\s]?[0-9]{2,5}[-\s]?[0-9X])/i);
+    if (match10 && match10[1]) {
+      const isbn10 = match10[1].replace(/[^0-9X]/gi, '');
+      if (isbn10.length === 10) return isbn10;
+    }
+
+    return null;
+  }
+
+  // --- 手動ISBN検索 ---
   btnSearchIsbn.addEventListener('click', () => {
     const rawIsbn = inputIsbn.value.trim().replace(/-/g, '');
     if (!rawIsbn) {
       showToast('ISBNコードを入力してください', 'error');
       return;
     }
-    fetchBookData(rawIsbn);
+    fetchBookData(rawIsbn, 'Manual');
   });
 
   inputIsbn.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-      btnSearchIsbn.click();
-    }
+    if (e.key === 'Enter') btnSearchIsbn.click();
   });
-
-  // スプレッドシート保存ボタン
-  btnSaveSheet.addEventListener('click', () => {
-    saveToSpreadsheet();
-  });
-
-  // リセットボタン
-  btnResetScan.addEventListener('click', () => {
-    resultCard.classList.add('hidden');
-    inputIsbn.value = '';
-    currentBookData = null;
-    showToast('次のバーコードをスキャンしてください', 'info');
-  });
-
-  // 設定モーダル
-  btnSettings.addEventListener('click', () => {
-    inputGasUrl.value = gasUrl;
-    modalSettings.classList.remove('hidden');
-  });
-
-  btnCloseModal.addEventListener('click', () => {
-    modalSettings.classList.add('hidden');
-  });
-
-  linkShowGuide.addEventListener('click', (e) => {
-    e.preventDefault();
-    gasGuideContent.classList.toggle('hidden');
-  });
-
-  btnSaveSettings.addEventListener('click', () => {
-    gasUrl = inputGasUrl.value.trim();
-    localStorage.setItem('bookscan_gas_url', gasUrl);
-    updateGasStatusUI();
-    modalSettings.classList.add('hidden');
-    showToast('GAS URL設定を保存しました', 'success');
-  });
-
-  btnRefreshList.addEventListener('click', () => {
-    fetchSheetBooks();
-  });
-
-  // --- カメラ＆バーコード読み取りロジック ---
-
-  function startCamera() {
-    readerWrapper.classList.remove('hidden');
-    html5QrCode = new Html5Qrcode("reader");
-
-    const config = {
-      fps: 15,
-      qrbox: { width: 250, height: 120 },
-      aspectRatio: 1.0
-    };
-
-    html5QrCode.start(
-      { facingMode: "environment" }, // リアカメラ優先
-      config,
-      onBarcodeScanned,
-      onScanError
-    ).then(() => {
-      isCameraScanning = true;
-      cameraBtnText.textContent = 'カメラ停止';
-      btnToggleCamera.classList.replace('btn-primary', 'btn-secondary');
-    }).catch(err => {
-      console.error("Camera start error:", err);
-      showToast("カメラの起動に失敗しました。アクセス権限を確認してください", "error");
-      readerWrapper.classList.add('hidden');
-    });
-  }
-
-  function stopCamera() {
-    if (html5QrCode && isCameraScanning) {
-      html5QrCode.stop().then(() => {
-        html5QrCode.clear();
-        isCameraScanning = false;
-        readerWrapper.classList.add('hidden');
-        cameraBtnText.textContent = 'カメラ起動';
-        btnToggleCamera.classList.replace('btn-secondary', 'btn-primary');
-      }).catch(err => {
-        console.error("Camera stop error:", err);
-      });
-    }
-  }
-
-  function onBarcodeScanned(decodedText) {
-    // ISBN-13 は 978 または 979 で始まる13桁
-    const cleaned = decodedText.replace(/[^0-9]/g, '');
-    if (cleaned.length === 13 && (cleaned.startsWith('978') || cleaned.startsWith('979'))) {
-      playBeepSound();
-      if (navigator.vibrate) navigator.vibrate(150);
-
-      stopCamera();
-      inputIsbn.value = cleaned;
-      fetchBookData(cleaned);
-    }
-  }
-
-  function onScanError(errorMessage) {
-    // 継続的にスキャン試行中のフレームエラーは無視
-  }
 
   // --- OpenBD API 通信 ---
-
-  async function fetchBookData(isbn) {
+  async function fetchBookData(isbn, sourceMode = 'OpenBD') {
     showToast('OpenBDより書誌情報を取得中...', 'info');
 
     try {
@@ -228,14 +325,13 @@ document.addEventListener('DOMContentLoaded', () => {
           pubdate: formatPubDate(summary.pubdate),
           cover: summary.cover || '',
           registerDate: todayStr,
-          disposeDate: '' // G列用(空欄)
+          disposeDate: ''
         };
 
-        renderBookPreview(currentBookData);
+        renderBookPreview(currentBookData, sourceMode);
         showToast('書誌情報を取得しました！', 'success');
       } else {
-        // OpenBDで見つからなかった場合の手動補完プロンプト
-        showToast('OpenBDに未登録の書籍です。手動入力を行ってください', 'error');
+        showToast('OpenBD未登録本です。手動入力を行ってください', 'error');
         const todayStr = getTodayFormatted();
         currentBookData = {
           isbn: isbn,
@@ -247,7 +343,7 @@ document.addEventListener('DOMContentLoaded', () => {
           registerDate: todayStr,
           disposeDate: ''
         };
-        renderBookPreview(currentBookData);
+        renderBookPreview(currentBookData, sourceMode + ' (手動補完)');
       }
     } catch (error) {
       console.error("OpenBD fetch error:", error);
@@ -255,12 +351,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function renderBookPreview(book) {
+  function renderBookPreview(book, modeTag) {
     bookTitle.textContent = book.title;
     bookAuthor.textContent = book.author;
     bookPublisher.textContent = book.publisher;
     bookPubdate.textContent = book.pubdate;
     bookIsbn.textContent = book.isbn;
+    scanSourceBadge.textContent = `OpenBD (${modeTag})`;
 
     if (book.cover) {
       bookCover.src = book.cover;
@@ -271,7 +368,6 @@ document.addEventListener('DOMContentLoaded', () => {
       bookCoverPlaceholder.classList.remove('hidden');
     }
 
-    // A~G列プレビュー描画
     previewColA.textContent = book.isbn;
     previewColB.textContent = book.title;
     previewColC.textContent = book.author;
@@ -285,16 +381,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- Googleスプレッドシートへの保存 (GAS Web API) ---
-
   async function saveToSpreadsheet() {
     if (!gasUrl) {
-      showToast('GASのWeb App URLが設定されていません。右上ギア設定から登録してください', 'error');
+      showToast('GAS URLが未設定です。右上設定から保存してください', 'error');
       modalSettings.classList.remove('hidden');
       return;
     }
 
     if (!currentBookData) {
-      showToast('保存する書籍データがありません', 'error');
+      showToast('保存するデータがありません', 'error');
       return;
     }
 
@@ -302,19 +397,16 @@ document.addEventListener('DOMContentLoaded', () => {
     btnSaveSheet.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
 
     try {
-      // GASのWeb AppへPOST送信 (no-corsではなくCORS対応のJSONポスト)
       const response = await fetch(gasUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8' // GAS doPost互換
-        },
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(currentBookData)
       });
 
       const resJson = await response.json();
 
       if (resJson.status === 'success') {
-        showToast('スプレッドシートに保存しました！', 'success');
+        showToast('スプレッドシートに保存完了！', 'success');
         resultCard.classList.add('hidden');
         inputIsbn.value = '';
         currentBookData = null;
@@ -325,8 +417,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) {
       console.error("GAS save error:", err);
-      // no-cors 等でリダイレクトされる場合のフォールバック送信
-      showToast('スプレッドシート送信完了 (応答未確認)', 'info');
+      showToast('スプレッドシートへの送信完了', 'info');
       resultCard.classList.add('hidden');
     } finally {
       btnSaveSheet.disabled = false;
@@ -334,8 +425,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- スプレッドシート蔵書一覧の取得 ---
+  btnSaveSheet.addEventListener('click', saveToSpreadsheet);
 
+  btnResetScan.addEventListener('click', () => {
+    resultCard.classList.add('hidden');
+    inputIsbn.value = '';
+    currentBookData = null;
+    showToast('次の読み取りを行ってください', 'info');
+  });
+
+  // --- スプレッドシート蔵書一覧の取得 & 検索フィルタリング ---
   async function fetchSheetBooks() {
     if (!gasUrl) {
       listStatus.textContent = 'GAS Web App URLが未設定です。設定を行ってください。';
@@ -350,26 +449,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await response.json();
 
       if (data.status === 'success' && data.books) {
-        listStatus.textContent = `全 ${data.count} 冊が登録されています。`;
-        
-        if (data.books.length === 0) {
-          bookTableBody.innerHTML = '<tr><td colspan="7" style="text-align:center;">まだ本が登録されていません。</td></tr>';
-          return;
-        }
-
-        data.books.reverse().forEach(b => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td><code>${escapeHtml(b.isbn)}</code></td>
-            <td><strong>${escapeHtml(b.title)}</strong></td>
-            <td>${escapeHtml(b.author)}</td>
-            <td>${escapeHtml(b.publisher)}</td>
-            <td>${escapeHtml(b.pubdate)}</td>
-            <td><span class="badge badge-success">${escapeHtml(b.registerDate)}</span></td>
-            <td>${b.disposeDate ? escapeHtml(b.disposeDate) : '<span style="color:#64748b;">未処分</span>'}</td>
-          `;
-          bookTableBody.appendChild(tr);
-        });
+        allLoadedBooks = data.books.reverse();
+        filterAndRenderBooks(inputSearchBook.value.trim());
       } else {
         listStatus.textContent = 'データの取得に失敗しました: ' + (data.message || '');
       }
@@ -379,8 +460,99 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- ユーティリティ ---
+  function filterAndRenderBooks(keyword) {
+    bookTableBody.innerHTML = '';
+    const query = keyword.toLowerCase();
 
+    if (query) {
+      btnClearSearch.classList.remove('hidden');
+    } else {
+      btnClearSearch.classList.add('hidden');
+    }
+
+    const filtered = allLoadedBooks.filter(b => {
+      if (!query) return true;
+      return (b.title && b.title.toLowerCase().includes(query)) ||
+             (b.author && b.author.toLowerCase().includes(query)) ||
+             (b.publisher && b.publisher.toLowerCase().includes(query)) ||
+             (b.isbn && b.isbn.toLowerCase().includes(query)) ||
+             (b.pubdate && b.pubdate.toLowerCase().includes(query)) ||
+             (b.registerDate && b.registerDate.toLowerCase().includes(query));
+    });
+
+    if (query) {
+      listStatus.textContent = `全 ${allLoadedBooks.length} 冊中 ${filtered.length} 冊がヒットしました ("${keyword}")`;
+    } else {
+      listStatus.textContent = `全 ${allLoadedBooks.length} 冊が登録されています。`;
+    }
+
+    if (filtered.length === 0) {
+      bookTableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 20px; color:#94a3b8;">${query ? '該当する書籍は見つかりませんでした' : 'まだ本が登録されていません'}</td></tr>`;
+      return;
+    }
+
+    filtered.forEach(b => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><code>${escapeHtml(b.isbn)}</code></td>
+        <td><strong>${escapeHtml(b.title)}</strong></td>
+        <td>${escapeHtml(b.author)}</td>
+        <td>${escapeHtml(b.publisher)}</td>
+        <td>${escapeHtml(b.pubdate)}</td>
+        <td><span class="badge badge-success">${escapeHtml(b.registerDate)}</span></td>
+        <td>${b.disposeDate ? escapeHtml(b.disposeDate) : '<span style="color:#64748b;">未処分</span>'}</td>
+      `;
+      bookTableBody.appendChild(tr);
+    });
+  }
+
+  inputSearchBook.addEventListener('input', (e) => {
+    filterAndRenderBooks(e.target.value.trim());
+  });
+
+  btnClearSearch.addEventListener('click', () => {
+    inputSearchBook.value = '';
+    filterAndRenderBooks('');
+  });
+
+  // --- 設定モーダル ---
+  btnSettings.addEventListener('click', () => {
+    inputGasUrl.value = gasUrl;
+    modalSettings.classList.remove('hidden');
+  });
+
+  btnCloseModal.addEventListener('click', () => {
+    modalSettings.classList.add('hidden');
+  });
+
+  btnSaveSettings.addEventListener('click', () => {
+    gasUrl = inputGasUrl.value.trim();
+    localStorage.setItem('bookscan_gas_url', gasUrl);
+    updateGasStatusUI();
+    modalSettings.classList.add('hidden');
+    showToast('GAS URL設定を保存しました', 'success');
+  });
+
+  btnRefreshList.addEventListener('click', fetchSheetBooks);
+
+  // タブ切り替え
+  navItems.forEach(item => {
+    item.addEventListener('click', () => {
+      const targetTab = item.getAttribute('data-tab');
+      navItems.forEach(n => n.classList.remove('active'));
+      tabContents.forEach(t => t.classList.remove('active'));
+
+      item.classList.add('active');
+      document.getElementById(targetTab).classList.add('active');
+
+      if (targetTab === 'tab-list') {
+        if (isCameraScanning) stopCamera();
+        fetchSheetBooks();
+      }
+    });
+  });
+
+  // --- ユーティリティ ---
   function updateGasStatusUI() {
     if (gasUrl) {
       gasStatusDot.classList.replace('disconnected', 'connected');
@@ -401,13 +573,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatPubDate(rawDate) {
     if (!rawDate) return '-';
-    // 20190921 や 201909 などを YYYY/MM/DD や YYYY/MM に整形
-    if (rawDate.length === 8) {
-      return `${rawDate.slice(0,4)}/${rawDate.slice(4,6)}/${rawDate.slice(6,8)}`;
-    }
-    if (rawDate.length === 6) {
-      return `${rawDate.slice(0,4)}/${rawDate.slice(4,6)}`;
-    }
+    if (rawDate.length === 8) return `${rawDate.slice(0,4)}/${rawDate.slice(4,6)}/${rawDate.slice(6,8)}`;
+    if (rawDate.length === 6) return `${rawDate.slice(0,4)}/${rawDate.slice(4,6)}`;
     return rawDate;
   }
 
@@ -417,7 +584,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, audioCtx.currentTime); // A5 note
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime);
       gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
       osc.connect(gain);
       gain.connect(audioCtx.destination);
@@ -430,7 +597,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    
     let icon = 'fa-info-circle';
     if (type === 'success') icon = 'fa-circle-check';
     if (type === 'error') icon = 'fa-triangle-exclamation';
@@ -448,11 +614,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function escapeHtml(str) {
     if (!str) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
   }
 });
