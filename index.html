@@ -7,6 +7,22 @@
   <meta name="description" content="BookScan - ISBNバーコード ＆ 文字読み取り(OCR) ＆ 蔵書検索対応 アプリ">
   <title>BookScan 蔵書管理 (v260812)</title>
 
+  <!-- 強制キャッシュクリア ＆ 旧Service Worker全消去スクリプト -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(registrations) {
+        for (let registration of registrations) {
+          registration.unregister();
+        }
+      });
+    }
+    if ('caches' in window) {
+      caches.keys().then(function(names) {
+        for (let name of names) caches.delete(name);
+      });
+    }
+  </script>
+
   <!-- Google Fonts & FontAwesome -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,8 +34,8 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <!-- PWA Manifest & CSS -->
-  <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json?v=260812_2">
+  <link rel="stylesheet" href="style.css?v=260812_2">
 </head>
 <body>
   <div class="app-container">
@@ -40,19 +56,19 @@
       
       <!-- タブ1: スキャナー画面 -->
       <section id="tab-scanner" class="tab-content active">
+
+        <!-- グローバルモード切替タブ (バーコード / OCR) -->
+        <div class="mode-selector">
+          <button id="mode-barcode" class="mode-btn active">
+            <i class="fa-solid fa-barcode"></i> バーコード
+          </button>
+          <button id="mode-ocr" class="mode-btn">
+            <i class="fa-solid fa-font"></i> ISBN文字読み取り(OCR)
+          </button>
+        </div>
         
         <!-- スキャナーカード -->
         <div class="card scanner-card">
-          
-          <!-- モード切替タブ (バーコード / OCR文字読み取り) -->
-          <div class="mode-selector">
-            <button id="mode-barcode" class="mode-btn active">
-              <i class="fa-solid fa-barcode"></i> バーコード
-            </button>
-            <button id="mode-ocr" class="mode-btn">
-              <i class="fa-solid fa-font"></i> ISBN文字読み取り(OCR)
-            </button>
-          </div>
 
           <div class="scanner-controls">
             <button id="btn-toggle-camera" class="btn btn-primary btn-block">
@@ -167,7 +183,7 @@
             </button>
           </div>
 
-          <!-- 蔵書検索入力バー -->
+          <!-- 蔵書一覧タブ内の検索バー -->
           <div class="search-box-wrapper">
             <div class="search-input-group">
               <i class="fa-solid fa-magnifying-glass search-icon"></i>
@@ -241,6 +257,6 @@
   <!-- トースト通知 -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="app.js?v=260812"></script>
+  <script src="app.js?v=260812_2"></script>
 </body>
 </html>

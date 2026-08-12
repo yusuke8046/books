@@ -17,7 +17,19 @@
   --radius-md: 12px;
   --radius-sm: 8px;
   --font-family: 'Inter', 'Noto Sans JP', sans-serif;
+
+
+/* Add top margin for UI elements to avoid header overlap */
+.mode-selector {
+  margin-top: 8px;
 }
+
+.search-box-wrapper {
+  margin-top: 8px;
+}
+
+
+
 
 * {
   box-sizing: border-box;

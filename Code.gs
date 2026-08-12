@@ -37,7 +37,7 @@ function doPost(e) {
     var contents = e.postData.contents;
     var data = JSON.parse(contents);
 
-    var isbn = data.isbn || "";
+    var isbn = String(data.isbn || "").replace(/-/g, "").trim();
     var title = data.title || "";
     var author = data.author || "";
     var publisher = data.publisher || "";
@@ -54,7 +54,7 @@ function doPost(e) {
     if (lastRow > 1) {
       var isbns = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
       for (var i = 0; i < isbns.length; i++) {
-        if (String(isbns[i][0]).trim() === String(isbn).trim()) {
+        if (String(isbns[i][0]).replace(/-/g, "").trim() === isbn) {
           isDuplicate = true;
           break;
         }
@@ -72,6 +72,9 @@ function doPost(e) {
     // 行の追加: A~G列
     // A: ISBN, B: タイトル, C: 著者名, D: 出版社名, E: 発行日, F: 登録日, G: 処分日(空欄)
     sheet.appendRow([isbn, title, author, publisher, pubdate, registerDate, ""]);
+    
+    // A列(ISBN)をテキスト形式に設定して指数表記などを防ぐ
+    sheet.getRange(sheet.getLastRow(), 1).setNumberFormat("@");
 
     return createJsonResponse({
       status: "success",

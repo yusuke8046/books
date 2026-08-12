@@ -223,10 +223,29 @@ document.addEventListener('DOMContentLoaded', () => {
     ocrStatusText.textContent = 'カメラ枠内のISBN文字を解析中...';
 
     const canvas = ocrCanvas;
-    canvas.width = ocrVideo.videoWidth;
-    canvas.height = ocrVideo.videoHeight;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(ocrVideo, 0, 0, canvas.width, canvas.height);
+
+    // --- OCR精度向上のためのクロップ処理 ---
+    // UI上のターゲット枠に合わせて、ビデオの中央付近のみを切り出す
+    // object-fit: cover を考慮した簡易的な計算
+    const videoW = ocrVideo.videoWidth;
+    const videoH = ocrVideo.videoHeight;
+    
+    // ターゲット枠の比率 (幅85%, 高さ約35%相当)
+    const cropWidth = videoW * 0.85;
+    const cropHeight = videoH * 0.35;
+    const cropX = (videoW - cropWidth) / 2;
+    const cropY = (videoH - cropHeight) / 2;
+
+    canvas.width = cropWidth;
+    canvas.height = cropHeight;
+
+    // クロップして描画
+    ctx.drawImage(ocrVideo, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+    // 画像処理: グレースケールとコントラスト強調でOCR精度を上げる
+    ctx.filter = 'grayscale(100%) contrast(150%)';
+    ctx.drawImage(canvas, 0, 0);
 
     try {
       if (typeof Tesseract === 'undefined') {
@@ -257,6 +276,8 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast(`ISBN文字を取得しました: ${extractedIsbn}`, 'success');
         fetchBookData(extractedIsbn, 'OCR');
       } else {
+        // デバッグ用: 解析された生テキストをコンソールに出力
+        console.log("OCR raw text:", text);
         showToast('ISBN文字が検出されませんでした。印刷文字に近づけて再試行してください', 'error');
       }
 
